@@ -15,8 +15,6 @@ mod TokenSale {
     impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
     impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
 
-    #[abi(embed_v0)]
-    impl OwnableImpl = OwnableComponent::OwnableImpl<ContractState>;
 
     #[storage]
     struct Storage {
