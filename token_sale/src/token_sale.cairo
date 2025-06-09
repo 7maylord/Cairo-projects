@@ -7,35 +7,46 @@ mod TokenSale {
     use crate::interfaces::ierc20::{IERC20Dispatcher, IERC20DispatcherTrait};
     
     use openzeppelin::upgrades::upgradeable::UpgradeableComponent;
+    use openzeppelin::access::ownable::OwnableComponent;
 
     component!(path: UpgradeableComponent, storage: anything, event: UpgradeableEvent);
+    component!(path: OwnableComponent, storage: ownable, event: OwnableEvent);
 
     impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
+    impl OwnableInternalImpl = OwnableComponent::InternalImpl<ContractState>;
+
+    #[abi(embed_v0)]
+    impl OwnableImpl = OwnableComponent::OwnableImpl<ContractState>;
 
     #[storage]
     struct Storage {
         accepted_payment_token: ContractAddress,
         token_price: Map<ContractAddress, u256>,
-        owner: ContractAddress,
         tokens_available_for_sale: Map<ContractAddress, u256>,
 
         #[substorage(v0)]
         anything: UpgradeableComponent::Storage,
+        #[substorage(v0)]
+        ownable: OwnableComponent::Storage,
     }
 
     #[event]
     #[derive(Drop, starknet::Event)]
     enum Event {
         #[flat]
-        UpgradeableEvent: UpgradeableComponent::Event
+        UpgradeableEvent: UpgradeableComponent::Event,
+        #[flat]
+        OwnableEvent: OwnableComponent::Event,
     }
+
 
     #[constructor]
     fn constructor(ref self: ContractState, owner: ContractAddress, accepted_payment_token: ContractAddress) {
-        self.owner.write(owner);
+        self.ownable.initializer(owner);
         self.accepted_payment_token.write(accepted_payment_token);
     }
 
+    #[abi(embed_v0)]
     impl TokenSaleImpl of ITokenSale<ContractState> {
         fn check_available_token(self: @ContractState, token_address: ContractAddress) -> u256 {
             let token = IERC20Dispatcher { contract_address: token_address };
@@ -46,10 +57,9 @@ mod TokenSale {
         }
 
         fn deposit_token(ref self: ContractState, token_address: ContractAddress, amount: u256, token_price: u256) {
+            self.ownable.assert_only_owner();
             let caller = get_caller_address();
             let this_contract = get_contract_address();
-
-            assert(caller == self.owner.read(), 'Unauthorized');
 
             let token = IERC20Dispatcher { contract_address: self.accepted_payment_token.read() };
             assert(token.balance_of(caller) > 0, 'insufficient balance');
@@ -80,8 +90,7 @@ mod TokenSale {
         }
 
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
-            assert(get_caller_address() == self.owner.read(), 'Unauthorized caller');
-
+            self.ownable.assert_only_owner();
             self.anything.upgrade(new_class_hash);
         }
     }

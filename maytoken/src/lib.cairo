@@ -30,7 +30,7 @@ mod maytoken {
     ) {
         let name = "MayToken";
         let symbol = "MTK";
-        let initial_supply = 1000000;
+        let initial_supply = 1000000_u256 * 1000000000000000000_u256;
 
         self.erc20.initializer(name, symbol);
         self.erc20.mint(recipient, initial_supply);
