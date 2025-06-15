@@ -35,4 +35,12 @@ mod maytoken {
         self.erc20.initializer(name, symbol);
         self.erc20.mint(recipient, initial_supply);
     }
+
+
+    #[generate_trait]
+    impl MayTokenImpl of MayTokenTrait {
+        fn mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
+            self.erc20.mint(recipient, amount);
+        }
+    }
 }

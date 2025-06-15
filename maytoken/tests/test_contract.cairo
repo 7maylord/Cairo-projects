@@ -1,6 +1,7 @@
 use starknet::ContractAddress;
+use core::traits::TryInto;
 
-use snforge_std::{declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address, stop_cheat_caller_address};
+use snforge_std::{declare, start_cheat_caller_address, ContractClassTrait, DeclareResultTrait, stop_cheat_caller_address};
 
 #[starknet::interface]
 pub trait IERC20Combined<TContractState> {
@@ -22,90 +23,103 @@ pub trait IERC20Combined<TContractState> {
     fn mint(ref self: TContractState, recipient: ContractAddress, amount: u256);
 }
 
-fn deploy_contract(name: ByteArray) -> ContractAddress {
+fn deploy_contract(name: ByteArray, recipient: ContractAddress) -> ContractAddress {
     let contract = declare(name).unwrap().contract_class();
-    let (contract_address, _) = contract.deploy(@ArrayTrait::new()).unwrap();
+    let mut constructor_args = array![];
+    constructor_args.append(recipient.into());
+    let (contract_address, _) = contract.deploy(@constructor_args).unwrap();
     contract_address
 }
 
 #[test]
 fn test_constructor() {
-    let contract_address = deploy_contract("NatToken");
+    let recipient: ContractAddress = 0x123456789.try_into().unwrap();
+    let contract_address = deploy_contract("maytoken", recipient);
 
-    let nat_token_contract = IERC20CombinedDispatcher { contract_address };
+    let may_token_contract = IERC20CombinedDispatcher { contract_address };
 
-    let token_name  = nat_token_contract.name();
-    let token_symbol  = nat_token_contract.symbol();
+    let token_name = may_token_contract.name();
+    let token_symbol = may_token_contract.symbol();
 
-    assert(token_name == "Nat Token", 'wrong name');
-    assert(token_symbol == "NAT", 'wrong symbol');
+    assert(token_name == "MayToken", 'wrong name');
+    assert(token_symbol == "MTK", 'wrong symbol');
+    
+    // Check initial supply was minted to recipient
+    let expected_supply = 1000000_u256 * 1000000000000000000_u256;
+    assert(may_token_contract.total_supply() == expected_supply, 'wrong initial supply');
+    assert(may_token_contract.balance_of(recipient) == expected_supply, 'wrong initial balance');
 }
 
 #[test]
 fn test_total_supply() {
-    let contract_address = deploy_contract("NatToken");
+    let recipient: ContractAddress = 0x123456789.try_into().unwrap();
+    let contract_address = deploy_contract("maytoken", recipient);
 
-    let nat_token_contract = IERC20CombinedDispatcher { contract_address };
+    let may_token_contract = IERC20CombinedDispatcher { contract_address };
 
     let mint_amount: u256 = 1000_u256;
-    let token_recipient: ContractAddress = starknet::contract_address_const::<0x123456711>();
+    let token_recipient: ContractAddress = 0x123456711.try_into().unwrap();
 
-    nat_token_contract.mint(token_recipient, mint_amount);
+    may_token_contract.mint(token_recipient, mint_amount);
 
-    assert(nat_token_contract.total_supply() == mint_amount, 'wrong supply');
+    let expected_total_supply = 1000000_u256 * 1000000000000000000_u256 + mint_amount;
+    assert(may_token_contract.total_supply() == expected_total_supply, 'wrong supply');
 }
 
 #[test]
 fn test_balance_of() {
-    let contract_address = deploy_contract("NatToken");
+    let recipient: ContractAddress = 0x123456789.try_into().unwrap();
+    let contract_address = deploy_contract("maytoken", recipient);
 
-    let nat_token_contract = IERC20CombinedDispatcher { contract_address };
+    let may_token_contract = IERC20CombinedDispatcher { contract_address };
 
     let mint_amount: u256 = 1000_u256;
-    let token_recipient: ContractAddress = starknet::contract_address_const::<0x123456711>();
+    let token_recipient: ContractAddress = 0x123456711.try_into().unwrap();
 
-    nat_token_contract.mint(token_recipient, mint_amount);
+    may_token_contract.mint(token_recipient, mint_amount);
 
-    assert(nat_token_contract.balance_of(token_recipient) == mint_amount, 'wrong balance');
+    assert(may_token_contract.balance_of(token_recipient) == mint_amount, 'wrong balance');
 }
 
 #[test]
 fn test_approve() {
-    let contract_address = deploy_contract("NatToken");
-    let nat_token_contract = IERC20CombinedDispatcher { contract_address };
+    let recipient: ContractAddress = 0x123456789.try_into().unwrap();
+    let contract_address = deploy_contract("maytoken", recipient);
+    let may_token_contract = IERC20CombinedDispatcher { contract_address };
 
-    let token_owner: ContractAddress = starknet::contract_address_const::<0x123450011>();
+    let token_owner: ContractAddress = 0x123450011.try_into().unwrap();
     let mint_amount: u256 = 1000_u256;
-    nat_token_contract.mint(token_owner, mint_amount);
-    assert(nat_token_contract.balance_of(token_owner) == mint_amount, 'wrong balance');
+    may_token_contract.mint(token_owner, mint_amount);
+    assert(may_token_contract.balance_of(token_owner) == mint_amount, 'wrong balance');
 
     let approve_amount: u256 = 100;
-    let token_recipient: ContractAddress = starknet::contract_address_const::<0x123456711>();
+    let token_recipient: ContractAddress = 0x123456711.try_into().unwrap();
 
     start_cheat_caller_address(contract_address, token_owner);
-    nat_token_contract.approve(token_recipient, approve_amount);
+    may_token_contract.approve(token_recipient, approve_amount);
     stop_cheat_caller_address(contract_address);
 
-    assert(nat_token_contract.allowance(token_owner, token_recipient) == approve_amount, 'wrong allowance');
+    assert(may_token_contract.allowance(token_owner, token_recipient) == approve_amount, 'wrong allowance');
 }
 
 #[test]
 fn test_transfer() {
-    let contract_address = deploy_contract("NatToken");
-    let nat_token_contract = IERC20CombinedDispatcher { contract_address };
+    let recipient: ContractAddress = 0x123456789.try_into().unwrap();
+    let contract_address = deploy_contract("maytoken", recipient);
+    let may_token_contract = IERC20CombinedDispatcher { contract_address };
 
-    let token_owner: ContractAddress = starknet::contract_address_const::<0x123450011>();
+    let token_owner: ContractAddress = 0x123450011.try_into().unwrap();
     let mint_amount: u256 = 1000_u256;
-    nat_token_contract.mint(token_owner, mint_amount);
-    assert(nat_token_contract.balance_of(token_owner) == mint_amount, 'wrong balance');
+    may_token_contract.mint(token_owner, mint_amount);
+    assert(may_token_contract.balance_of(token_owner) == mint_amount, 'wrong balance');
 
     let transfer_amount: u256 = 100;
-    let token_recipient: ContractAddress = starknet::contract_address_const::<0x123456711>();
+    let token_recipient: ContractAddress = 0x123456711.try_into().unwrap();
 
     start_cheat_caller_address(contract_address, token_owner);
-    nat_token_contract.transfer(token_recipient, transfer_amount);
+    may_token_contract.transfer(token_recipient, transfer_amount);
     stop_cheat_caller_address(contract_address);
 
-    assert(nat_token_contract.balance_of(token_recipient) == transfer_amount, 'balance increment failed');
-    assert(nat_token_contract.balance_of(token_owner) == mint_amount - transfer_amount, 'incorrect balance');
+    assert(may_token_contract.balance_of(token_recipient) == transfer_amount, 'balance increment failed');
+    assert(may_token_contract.balance_of(token_owner) == mint_amount - transfer_amount, 'incorrect balance');
 }
