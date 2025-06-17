@@ -47,11 +47,7 @@ mod TokenSale {
     #[abi(embed_v0)]
     impl TokenSaleImpl of ITokenSale<ContractState> {
         fn check_available_token(self: @ContractState, token_address: ContractAddress) -> u256 {
-            let token = IERC20Dispatcher { contract_address: token_address };
-
-            let this_address = get_contract_address();
-
-            return token.balance_of(this_address);
+            self.tokens_available_for_sale.entry(token_address).read()
         }
 
         fn deposit_token(ref self: ContractState, token_address: ContractAddress, amount: u256, token_price: u256) {
