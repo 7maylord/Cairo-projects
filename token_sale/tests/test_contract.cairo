@@ -1,11 +1,10 @@
-use starknet::{ContractAddress, ClassHash, contract_address_const};
+use starknet::{ContractAddress, ClassHash};
 use snforge_std::{
-    declare, ContractClassTrait, DeclareResultTrait, start_cheat_caller_address,
-    stop_cheat_caller_address, start_cheat_contract_address, stop_cheat_contract_address,
-    spy_events, EventSpyAssertionsTrait, cheat_caller_address, CheatSpan
+    declare, ContractClassTrait, DeclareResultTrait,
+    cheat_caller_address, start_cheat_caller_address, stop_cheat_caller_address, CheatSpan, get_class_hash
 };
 
-use token_sale::{ITokenSaleDispatcher, ITokenSaleDispatcherTrait};
+use token_sale::interfaces::itoken_sale::{ITokenSaleDispatcher, ITokenSaleDispatcherTrait};
 use token_sale::interfaces::ierc20::{IERC20Dispatcher, IERC20DispatcherTrait};
 use core::num::traits::Zero;
 
@@ -19,35 +18,28 @@ fn deploy_main_contract(name: ByteArray, owner: ContractAddress, accepted_paymen
     contract_address
 }
 
-fn deploy_mock_erc20(
-    name: ByteArray,
-    symbol: ByteArray,
-    decimals: u8,
-    initial_supply: u256,
-    recipient: ContractAddress
-) -> ContractAddress {
+fn deploy_mock_erc20( name: ByteArray, symbol: ByteArray ) -> ContractAddress {
     let contract = declare("MockERC20").unwrap().contract_class();
-    let mut constructor_args = array![];
-    constructor_args.append(name.into());
-    constructor_args.append(symbol.into());
-    constructor_args.append(decimals.into());
-    constructor_args.append(initial_supply.into());
-    constructor_args.append(recipient.into());
-    let (contract_address, _) = contract.deploy(@constructor_args).unwrap();
+    //let mut erc20_args: Array<felt252> = array![];
+    let mut erc20_args = array![];
+     // Convert each argument to felt252
+     name.serialize(ref erc20_args);
+     symbol.serialize(ref erc20_args);
+    let (contract_address, _) = contract.deploy(@erc20_args).unwrap();
     contract_address
 }
 
 // Test addresses
 fn OWNER() -> ContractAddress {
-    contract_address_const::<'owner'>()
+    0x1.try_into().unwrap() 
 }
 
 fn USER() -> ContractAddress {
-    contract_address_const::<'user'>()
+    0x2.try_into().unwrap() 
 }
 
 fn BUYER() -> ContractAddress {
-    contract_address_const::<'buyer'>()
+    0x3.try_into().unwrap() 
 }
 
 
@@ -55,20 +47,23 @@ fn BUYER() -> ContractAddress {
 fn test_constructor() {
     let owner = OWNER();
 
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
 
-    let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token );
+    let token_sale_contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
 
-    let dispatcher = ITokenSaleDispatcher { contract_address };
+    let _dispatcher = ITokenSaleDispatcher { contract_address: token_sale_contract_address };
 
-    assert!(contract_address != Zero::zero(), "Contract Is not deployed")
+    assert!(token_sale_contract_address != Zero::zero(), "Contract Is not deployed");
+    assert!(accepted_payment_token != Zero::zero(), "Contract Is not deployed");
+    
+
 }
 
 #[test]
 fn test_check_available_token_returns_zero_when_no_tokens() {
     let owner = OWNER();
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner);
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 0, owner); // Zero initial supply
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SALE", "SALE"); 
     
     let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
@@ -80,20 +75,30 @@ fn test_check_available_token_returns_zero_when_no_tokens() {
 #[test]
 fn test_check_available_token_returns_correct_balance() {
     let owner = OWNER();
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
-    let dispatcher = ITokenSaleDispatcher { contract_address };
+    let token_sale_contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
+    let dispatcher = ITokenSaleDispatcher { contract_address: token_sale_contract_address };
     
     // Deploy sale token and give balance to the contract
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, contract_address);
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL");
     let token_dispatcher = IERC20Dispatcher { contract_address: sale_token };
+    start_cheat_caller_address(sale_token, owner);
+    token_dispatcher.mint(owner, 1000);
+
+    token_dispatcher.approve(token_sale_contract_address, 1000);
+    stop_cheat_caller_address(sale_token);
+
+    // Deposit 1000 tokens with price 5
+    start_cheat_caller_address(token_sale_contract_address, owner);
+    dispatcher.deposit_token(sale_token, 1000, 5); 
+    stop_cheat_caller_address(token_sale_contract_address);
     
     let available = dispatcher.check_available_token(sale_token);
     assert!(available == 1000, "Should return correct token balance");
     
     // Verify with direct balance check
-    let direct_balance = token_dispatcher.balance_of(contract_address);
+    let direct_balance = token_dispatcher.balance_of(token_sale_contract_address);
     assert!(direct_balance == 1000, "Direct balance check should match");
 }
 
@@ -102,23 +107,23 @@ fn test_check_available_token_returns_correct_balance() {
 fn test_deposit_token_fails_for_non_owner() {
     let owner = OWNER();
     let user = USER();
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner);
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SALE");
     
     let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
     
     cheat_caller_address(contract_address, user, CheatSpan::TargetCalls(1));
-    dispatcher.deposit_token(sale_token, 100, 50);
+    dispatcher.deposit_token(sale_token, 200, 50);
 }
 
 #[test]
 #[should_panic(expected: ('insufficient balance',))]
 fn test_deposit_token_fails_insufficient_balance() {
     let owner = OWNER();
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner); // Zero balance
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
-    
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL"); 
+
     let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
     
@@ -129,97 +134,109 @@ fn test_deposit_token_fails_insufficient_balance() {
 #[test]
 fn test_deposit_token_success() {
     let owner = OWNER();
-    let payment_token = deploy_mock_erc20("Maytoken", "MTK", 18, 1000000, owner);
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, payment_token);
-    let dispatcher = ITokenSaleDispatcher { contract_address };
+    let token_sale_contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
+    let dispatcher = ITokenSaleDispatcher { contract_address: token_sale_contract_address };
     let sale_dispatcher = IERC20Dispatcher { contract_address: sale_token }; 
     
-    // Owner approves sale token transfer
-    cheat_caller_address(sale_token, owner, CheatSpan::TargetCalls(1));
-    sale_dispatcher.approve(contract_address, 100);
+    start_cheat_caller_address(sale_token, owner);
+    sale_dispatcher.mint(owner, 1000);
+
+    sale_dispatcher.approve(token_sale_contract_address, 100);
+    stop_cheat_caller_address(sale_token);
     
-    // Owner deposits tokens
-    cheat_caller_address(contract_address, owner, CheatSpan::TargetCalls(1));
+    cheat_caller_address(token_sale_contract_address, owner, CheatSpan::TargetCalls(1));
     dispatcher.deposit_token(sale_token, 100, 5); // Price per token = 5
+
     
     // Verify sale tokens transferred
-    let contract_sale_balance = sale_dispatcher.balance_of(contract_address);
-    assert!(contract_sale_balance == 100, "Contract should have sale tokens");
+    let contract_sale_token_balance = sale_dispatcher.balance_of(token_sale_contract_address);
+    assert!(contract_sale_token_balance == 100, "Contract should have sale tokens");
 }
 
 #[test]
-#[should_panic(expected: ('amount must be exact',))]
-fn test_buy_token_fails_wrong_amount() {
+#[should_panic(expected: ('Amount must be greater than 0',))]
+fn test_buy_token_fails_zero_amount() {
     let owner = OWNER();
     let buyer = BUYER();
-    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK", 18, 1000000, owner);;
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL");
     
     let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
-    let payment_dispatcher = IERC20Dispatcher { contract_address: accepted_payment_token };
     
-    // Setup: Owner deposits tokens
-    cheat_caller_address(accepted_payment_token, owner, CheatSpan::TargetCalls(1));
-    payment_dispatcher.approve(contract_address, 500);
-    
-    cheat_caller_address(contract_address, owner, CheatSpan::TargetCalls(1));
-    dispatcher.deposit_token(sale_token, 100, 500);
-    
-    // Buyer tries to buy different amount (should fail)
+    // Buyer tries to buy zero amount (should fail)
     cheat_caller_address(contract_address, buyer, CheatSpan::TargetCalls(1));
-    dispatcher.buy_token(sale_token, 50); // Wrong amount
+    dispatcher.buy_token(sale_token, 0);
 }
 
 #[test]
-#[should_panic(expected: ('insufficient funds',))]
+#[should_panic(expected: ('Insufficient funds',))]
 fn test_buy_token_fails_insufficient_funds() {
     let owner = OWNER();
     let buyer = BUYER();
-    let payment_token = deploy_mock_erc20("Maytoken", "MTK", 18, 400, buyer); // Not enough for purchase
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, payment_token);
-    let dispatcher = ITokenSaleDispatcher { contract_address };
-    let payment_dispatcher = IERC20Dispatcher { contract_address: payment_token };
+    let token_sale_contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
+    let dispatcher = ITokenSaleDispatcher { contract_address: token_sale_contract_address };
+    let payment_dispatcher = IERC20Dispatcher { contract_address: accepted_payment_token };
+    let sale_dispatcher = IERC20Dispatcher { contract_address: sale_token };
     
-    // Owner setup
-    cheat_caller_address(payment_token, owner, CheatSpan::TargetCalls(1));
-    payment_dispatcher.approve(contract_address, 500);
+    // Owner setup - deposit tokens for sale
+    start_cheat_caller_address(sale_token, owner);
+    sale_dispatcher.mint(owner, 10000);
     
-    cheat_caller_address(contract_address, owner, CheatSpan::TargetCalls(1));
-    dispatcher.deposit_token(sale_token, 100, 500); // Price is 500, buyer only has 400
+    sale_dispatcher.approve(token_sale_contract_address, 1000);
+    stop_cheat_caller_address(sale_token);
     
-    cheat_caller_address(contract_address, buyer, CheatSpan::TargetCalls(1));
-    dispatcher.buy_token(sale_token, 100);
+    cheat_caller_address(token_sale_contract_address, owner, CheatSpan::TargetCalls(1));
+    dispatcher.deposit_token(sale_token, 1000, 500); // Price is 500 per token
+    
+    // Give buyer insufficient funds (only 400, but needs 500 for 1 token)
+    cheat_caller_address(accepted_payment_token, owner, CheatSpan::TargetCalls(1));
+    payment_dispatcher.transfer(buyer, 400);
+    
+    // Buyer approves payment
+    cheat_caller_address(accepted_payment_token, buyer, CheatSpan::TargetCalls(1));
+    payment_dispatcher.approve(token_sale_contract_address, 400);
+    
+    // Try to buy 1 token (costs 500, but buyer only has 400)
+    cheat_caller_address(token_sale_contract_address, buyer, CheatSpan::TargetCalls(1));
+    dispatcher.buy_token(sale_token, 1);
 }
 
 #[test]
 fn test_buy_token_success() {
     let owner = OWNER();
     let buyer = BUYER();
-    let payment_token = deploy_mock_erc20("USDC", "USDC", 6, 1000000, owner);
-    let sale_token = deploy_mock_erc20("SALE", "SALE", 18, 1000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
+    let sale_token = deploy_mock_erc20("SaleToken", "SAL");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, payment_token);
+    let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
-    let payment_dispatcher = IERC20Dispatcher { contract_address: payment_token };
+    let payment_dispatcher = IERC20Dispatcher { contract_address: accepted_payment_token };
     let sale_dispatcher = IERC20Dispatcher { contract_address: sale_token };
 
     // Setup deposit
-    cheat_caller_address(sale_token, owner, CheatSpan::TargetCalls(1));
+    start_cheat_caller_address(sale_token, owner);
+    sale_dispatcher.mint(owner, 1000);
     sale_dispatcher.approve(contract_address, 100);
+    stop_cheat_caller_address(sale_token);
+
     cheat_caller_address(contract_address, owner, CheatSpan::TargetCalls(1));
     dispatcher.deposit_token(sale_token, 100, 5); // 5 per token
 
-    // Buyer setup
-    payment_dispatcher.transfer(owner, buyer, 500); // Send buyer funds
-    cheat_caller_address(payment_token, buyer, CheatSpan::TargetCalls(1));
+    // Buyer setup - transfer funds to buyer
+    cheat_caller_address(accepted_payment_token, owner, CheatSpan::TargetCalls(1));
+    payment_dispatcher.transfer(buyer, 500); // Send buyer funds
+    
+    cheat_caller_address(accepted_payment_token, buyer, CheatSpan::TargetCalls(1));
     payment_dispatcher.approve(contract_address, 500);
     
-    // Purchase 50 tokens (250 USDC)
+    // Purchase 50 tokens (250 payment tokens)
     cheat_caller_address(contract_address, buyer, CheatSpan::TargetCalls(1));
     dispatcher.buy_token(sale_token, 50);
     
@@ -239,32 +256,35 @@ fn test_buy_token_success() {
 fn test_upgrade_fails_for_non_owner() {
     let owner = OWNER();
     let user = USER();
-    let payment_token = deploy_mock_erc20("Maytoken", "MTK", 18, 1000000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, payment_token);
+    let contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
     let dispatcher = ITokenSaleDispatcher { contract_address };
     
     let new_class_hash: ClassHash = 0x123.try_into().unwrap();
     
-    cheat_caller_address(contract_address, user, CheatSpan::TargetCalls(1));
+    start_cheat_caller_address(contract_address, user);
     dispatcher.upgrade(new_class_hash);
+    stop_cheat_caller_address(contract_address);
 }
 
 #[test]
 fn test_upgrade_success() {
     let owner = OWNER();
-    let payment_token = deploy_mock_erc20("USDC", "USDC", 6, 1000000, owner);
+    let accepted_payment_token = deploy_mock_erc20("MayToken", "MTK");
     
-    let contract_address = deploy_main_contract("TokenSale", owner, payment_token);
-    let dispatcher = ITokenSaleDispatcher { contract_address };
-    
-    // Declare a new contract class for upgrade
-    let new_contract = declare("TokenSale").unwrap().contract_class();
-    let new_class_hash = new_contract.class_hash;
-    
-    cheat_caller_address(contract_address, owner, CheatSpan::TargetCalls(1));
-    dispatcher.upgrade(new_class_hash);
-    
-    // Test should complete without panic
-}
+    let token_sale_contract_address = deploy_main_contract("TokenSale", owner, accepted_payment_token);
+    let dispatcher = ITokenSaleDispatcher { contract_address: token_sale_contract_address };
 
+    let original_class_hash = get_class_hash(token_sale_contract_address);
+    
+    let new_contract = declare("MockERC20").unwrap().contract_class();
+    let new_class_hash = new_contract.class_hash;
+
+    assert!(*new_class_hash != original_class_hash, "Same Hash");
+    
+    cheat_caller_address(token_sale_contract_address, owner, CheatSpan::TargetCalls(1));
+    dispatcher.upgrade(*new_class_hash);
+
+    assert!(get_class_hash(token_sale_contract_address) == *new_class_hash, "Upgrade Failed");
+}

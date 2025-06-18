@@ -35,6 +35,26 @@ mod TokenSale {
         UpgradeableEvent: UpgradeableComponent::Event,
         #[flat]
         OwnableEvent: OwnableComponent::Event,
+        TokenDeposited: TokenDeposited,
+        TokenPurchased: TokenPurchased,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct TokenDeposited {
+        #[key]
+        token_address: ContractAddress,
+        amount: u256,
+        price: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct TokenPurchased {
+        #[key]
+        buyer: ContractAddress,
+        #[key]
+        token_address: ContractAddress,
+        amount: u256,
+        total_cost: u256,
     }
 
 
@@ -53,13 +73,11 @@ mod TokenSale {
 
             return token.balance_of(this_address);
         }
-        
-        fn check_available_token_price(self: @ContractState, token_address: ContractAddress) -> u256 {
-            self.tokens_available_for_sale.entry(token_address).read()
-        }
 
+        
         fn deposit_token(ref self: ContractState, token_address: ContractAddress, amount: u256, token_price: u256) {
             self.ownable.assert_only_owner();
+
             let caller = get_caller_address();
             let this_contract = get_contract_address();
 
@@ -69,31 +87,62 @@ mod TokenSale {
             let transfer = token.transfer_from(caller, this_contract, amount);
             assert(transfer, 'transfer failed');
 
-            self.tokens_available_for_sale.entry(token_address).write(amount);
+            let current_available = self.tokens_available_for_sale.entry(token_address).read();
+            self.tokens_available_for_sale.entry(token_address).write(current_available + amount);
             self.token_price.entry(token_address).write(token_price);
+
+            self.emit(TokenDeposited { token_address, amount, price: token_price });
         }
 
         fn buy_token(ref self: ContractState, token_address: ContractAddress, amount: u256) {
-            assert!(self.tokens_available_for_sale.entry(token_address).read() == amount, "amount must be exact");
+            assert(amount > 0, 'Amount must be greater than 0');
+            
+            let available_tokens = self.tokens_available_for_sale.entry(token_address).read();
+            assert(available_tokens >= amount, 'Not enough tokens available');
 
             let buyer = get_caller_address();
+            let token_price = self.token_price.entry(token_address).read();
+            assert(token_price > 0, 'Token not available for sale');
+
+            let total_cost = amount * token_price;
 
             let payment_token = IERC20Dispatcher { contract_address: self.accepted_payment_token.read() };
             let token_to_buy = IERC20Dispatcher { contract_address: token_address };
             
             let buyer_balance = payment_token.balance_of(buyer);
-            let buying_price = self.token_price.entry(token_address).read();
+            assert(buyer_balance >= total_cost, 'Insufficient funds');
 
-            assert(buyer_balance >= buying_price, 'insufficient funds');
+            // Transfer payment from buyer to contract
+            let payment_success = payment_token.transfer_from(buyer, get_contract_address(), total_cost);
+            assert(payment_success, 'Payment transfer failed');
 
-            payment_token.transfer_from(buyer, get_contract_address(), buying_price);
-            let total_contract_balance = self.tokens_available_for_sale.entry(token_address).read();
-            token_to_buy.transfer(buyer, total_contract_balance);
+            // Transfer tokens to buyer
+            let token_success = token_to_buy.transfer(buyer, amount);
+            assert(token_success, 'Token transfer failed');
+
+            // Update available tokens
+            self.tokens_available_for_sale.entry(token_address).write(available_tokens - amount);
+
+            self.emit(TokenPurchased { buyer, token_address, amount, total_cost });
         }
 
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
             self.ownable.assert_only_owner();
             self.anything.upgrade(new_class_hash);
+        }
+
+        fn withdraw_token(ref self: ContractState) {
+            self.ownable.assert_only_owner();
+            let caller = get_caller_address();
+            let this_contract = get_contract_address();
+            let payment_token = IERC20Dispatcher {
+                contract_address: self.accepted_payment_token.read(),
+            };
+            let contract_balance = payment_token.balance_of(this_contract);
+
+            if contract_balance > 0 {
+                payment_token.transfer(caller, contract_balance);
+            }
         }
     }
 }
