@@ -47,6 +47,14 @@ mod TokenSale {
     #[abi(embed_v0)]
     impl TokenSaleImpl of ITokenSale<ContractState> {
         fn check_available_token(self: @ContractState, token_address: ContractAddress) -> u256 {
+            let token = IERC20Dispatcher { contract_address: token_address };
+
+            let this_address = get_contract_address();
+
+            return token.balance_of(this_address);
+        }
+        
+        fn check_available_token_price(self: @ContractState, token_address: ContractAddress) -> u256 {
             self.tokens_available_for_sale.entry(token_address).read()
         }
 
@@ -55,7 +63,7 @@ mod TokenSale {
             let caller = get_caller_address();
             let this_contract = get_contract_address();
 
-            let token = IERC20Dispatcher { contract_address: self.accepted_payment_token.read() };
+            let token = IERC20Dispatcher { contract_address: token_address };
             assert(token.balance_of(caller) > 0, 'insufficient balance');
 
             let transfer = token.transfer_from(caller, this_contract, amount);
