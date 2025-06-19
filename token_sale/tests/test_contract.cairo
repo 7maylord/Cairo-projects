@@ -173,7 +173,7 @@ fn test_buy_token_fails_zero_amount() {
 }
 
 #[test]
-#[should_panic(expected: ('Insufficient funds',))]
+#[should_panic(expected: ('ERC20: insufficient balance',))]
 fn test_buy_token_fails_insufficient_funds() {
     let owner = OWNER();
     let buyer = BUYER();
@@ -222,7 +222,7 @@ fn test_buy_token_success() {
 
     // Setup deposit
     start_cheat_caller_address(sale_token, owner);
-    sale_dispatcher.mint(owner, 1000);
+    sale_dispatcher.mint(owner, 10000);
     sale_dispatcher.approve(contract_address, 100);
     stop_cheat_caller_address(sale_token);
 
@@ -231,7 +231,7 @@ fn test_buy_token_success() {
 
     // Buyer setup - transfer funds to buyer
     cheat_caller_address(accepted_payment_token, owner, CheatSpan::TargetCalls(1));
-    payment_dispatcher.transfer(buyer, 500); // Send buyer funds
+    payment_dispatcher.mint(buyer, 5000); // Send buyer funds
     
     cheat_caller_address(accepted_payment_token, buyer, CheatSpan::TargetCalls(1));
     payment_dispatcher.approve(contract_address, 500);
